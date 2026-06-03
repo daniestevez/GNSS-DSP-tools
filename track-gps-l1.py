@@ -43,11 +43,11 @@ class tracking_state:
     self.mode = mode
     self.correlator_spacing = 0.25
     self.prompt1 = 0 + 0*(1j)
-    self.pll_k1, self.pll_k2 = compute_loop_ks(50)
+    self.pll_k1, self.pll_k2 = compute_loop_ks(200)
     self.eml = 0
     self.carrier_cyc = 0
     self.code_cyc = 0
-    self.dll_k1 = compute_loop_k(1)
+    self.dll_k1 = compute_loop_k(3)
 
 # tracking loops
 
@@ -177,11 +177,11 @@ while True:
   if block>=fll_wide_time+fll_narrow_time:
     s.mode = 'PLL'
   if block == 5000:
-    s.correlator_spacing = 0.2
-    s.dll_k1 = compute_loop_k(0.5)
+    s.correlator_spacing = 0.1
+    s.dll_k1 = compute_loop_k(1)
   if block == 10000:
-    s.correlator_spacing = 0.05
-    s.dll_k1 = compute_loop_k(0.1)
+    s.correlator_spacing = 0.02
+    s.dll_k1 = compute_loop_k(0.03)
 
   if s.code_p<ca.code_length/2:
     n = int(fs*0.001*(ca.code_length-s.code_p)/ca.code_length)
