@@ -105,7 +105,8 @@ def worker(p):
 import multiprocessing as mp
 
 cpus = mp.cpu_count()
-results = mp.Pool(cpus).map(worker, map(lambda prn: (x,prn),prns))
+#results = mp.Pool(cpus).map(worker, map(lambda prn: (x,prn),prns))
+results = [worker((x, prn)) for prn in prns]
 
 for r in results:
   print(r)

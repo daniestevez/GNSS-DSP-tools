@@ -10,16 +10,23 @@ import gnsstools.io as io
 import gnsstools.discriminator as discriminator
 import gnsstools.util as util
 
-def compute_dll_ks(dll_bw):
+def compute_loop_ks(bw):
   T = 1e-3
-  BLT = dll_bw * T
+  BLT = bw * T
   Delta = np.cbrt(36 * BLT**2 + np.sqrt(3) * np.sqrt(432 * BLT**4 + 848 * BLT**3 + 624 * BLT**2+ 204 * BLT + 25) +
                   36 * BLT + 9)
   z = ((12 * BLT + 6) / (3 * np.cbrt(6) * (2 * BLT + 1) * Delta) +
        (np.cbrt(2) * Delta) / (np.cbrt(9) * (2 * BLT + 1)) - 1)
-  dll_k1 = (1 - z**2) / T
-  dll_k2 = (1 - z)**2 / T
-  return dll_k1, dll_k2
+  k1 = (1 - z**2) / T
+  k2 = (1 - z)**2 / T
+  return k1, k2
+
+
+def compute_loop_k(bw):
+  T = 1e-3
+  BLT = bw * T
+  k1 = (4 * BLT) / (2 * BLT + 1) / T
+  return k1
 
 class tracking_state:
   def __init__(self,fs,prn,code_p,code_f,code_i,carrier_p,carrier_f,carrier_i,mode):
@@ -31,15 +38,16 @@ class tracking_state:
     self.code_i = code_i
     self.carrier_p = carrier_p
     self.carrier_f = carrier_f
+    self.carrier_f_avg = carrier_f
     self.carrier_i = carrier_i
     self.mode = mode
     self.correlator_spacing = 0.25
     self.prompt1 = 0 + 0*(1j)
-    self.carrier_e1 = 0
+    self.pll_k1, self.pll_k2 = compute_loop_ks(50)
     self.eml = 0
     self.carrier_cyc = 0
     self.code_cyc = 0
-    self.dll_k1, self.dll_k2 = compute_dll_ks(1)
+    self.dll_k1 = compute_loop_k(1)
 
 # tracking loops
 
@@ -47,40 +55,42 @@ def track(x,s):
   n = len(x)
   fs = s.fs
 
-  nco.mix(x,-s.carrier_f/fs, s.carrier_p)
-  s.carrier_p = s.carrier_p - n*s.carrier_f/fs
-  t = np.mod(s.carrier_p,1)
-  dcyc = int(round(s.carrier_p-t))
-  s.carrier_cyc += dcyc
-  s.carrier_p = t
+  nco.mix(x,-s.carrier_f/fs, -s.carrier_p)
+  s.carrier_p += 0.5 * n * s.carrier_f / fs
 
-  cf = (s.code_f+s.carrier_f/1540.0)/fs
-
+  cf = s.code_f / fs
   p_early = ca.correlate(x, s.prn, 0, s.code_p-s.correlator_spacing, cf, ca.ca_code(prn))
   p_prompt = ca.correlate(x, s.prn, 0, s.code_p, cf, ca.ca_code(prn))
   p_late = ca.correlate(x, s.prn, 0, s.code_p+s.correlator_spacing, cf, ca.ca_code(prn))
+  s.code_p += 0.5 * n * cf
 
   if s.mode=='FLL_WIDE':
     fll_k = 3.0
     a = p_prompt
     b = s.prompt1
     e = discriminator.fll_atan(a,b)
-    s.carrier_f = s.carrier_f + fll_k*e
+    s.carrier_f_avg += fll_k * e
+    s.carrier_f = s.carrier_f_avg
     s.prompt1 = p_prompt
   elif s.mode=='FLL_NARROW':
     fll_k = 0.8
     a = p_prompt
     b = s.prompt1
     e = discriminator.fll_atan(a,b)
-    s.carrier_f = s.carrier_f + fll_k*e
+    s.carrier_f_avg += fll_k * e
+    s.carrier_f = s.carrier_f_avg
     s.prompt1 = p_prompt
   elif s.mode=='PLL':
-    pll_k1 = 0.1
-    pll_k2 = 3.5
-    e = discriminator.pll_costas(p_prompt)
-    e1 = s.carrier_e1
-    s.carrier_f = s.carrier_f + pll_k1*e + pll_k2*(e-e1)
-    s.carrier_e1 = e
+    e = discriminator.pll_costas(p_prompt) / (2 * np.pi)
+    s.carrier_f_avg += s.pll_k2 * e
+    s.carrier_f = s.carrier_f_avg + s.pll_k1 * e
+
+  s.carrier_p += 0.5 * n * s.carrier_f / fs
+  t = np.mod(s.carrier_p,1)
+  dcyc = int(round(s.carrier_p-t))
+  s.carrier_cyc += dcyc
+  s.carrier_p = t
+
 
 # code loop
 
@@ -90,12 +100,12 @@ def track(x,s):
   if s.prompt==0:
     e = 0
   else:
-    e = 0.5*((p_late-p_early)/p_prompt).real
+    e = 0.5*((p_late-p_early)/p_prompt).real / s.correlator_spacing
   s.eml = e
-  s.code_f_avg += s.dll_k2 * e
-  s.code_f = s.code_f_avg + s.dll_k1 * e
+  #s.code_f_avg += s.dll_k2 * e
+  s.code_f = s.code_f_avg + s.dll_k1 * e + s.carrier_f / 1540
 
-  s.code_p = s.code_p + n*cf
+  s.code_p = s.code_p + 0.5 * n * cf
   t = np.mod(s.code_p,ca.code_length)
   dcyc = int(round(s.code_p-t))
   s.code_cyc += dcyc
@@ -167,11 +177,11 @@ while True:
   if block>=fll_wide_time+fll_narrow_time:
     s.mode = 'PLL'
   if block == 5000:
-    s.correlator_spacing = 0.1
-    s.dll_k1, s.dll_k2 = compute_dll_ks(0.25)
+    s.correlator_spacing = 0.2
+    s.dll_k1 = compute_loop_k(0.5)
   if block == 10000:
-    s.correlator_spacing = 0.02
-    s.dll_k1, s.dll_k2 = compute_dll_ks(0.1)
+    s.correlator_spacing = 0.05
+    s.dll_k1 = compute_loop_k(0.1)
 
   if s.code_p<ca.code_length/2:
     n = int(fs*0.001*(ca.code_length-s.code_p)/ca.code_length)
