@@ -47,7 +47,7 @@ class tracking_state:
     self.eml = 0
     self.carrier_cyc = 0
     self.code_cyc = 0
-    self.dll_k1 = compute_loop_k(3)
+    self.dll_k1 = compute_loop_k(2)
 
 # tracking loops
 
@@ -100,7 +100,7 @@ def track(x,s):
   if s.prompt==0:
     e = 0
   else:
-    e = 0.5*((p_late-p_early)/p_prompt).real / s.correlator_spacing
+    e = 0.5*((p_late-p_early)/p_prompt).real
   s.eml = e
   #s.code_f_avg += s.dll_k2 * e
   s.code_f = s.code_f_avg + s.dll_k1 * e + s.carrier_f / 1540
@@ -178,10 +178,10 @@ while True:
     s.mode = 'PLL'
   if block == 5000:
     s.correlator_spacing = 0.1
-    s.dll_k1 = compute_loop_k(1)
+    s.dll_k1 = compute_loop_k(0.5)
   if block == 10000:
-    s.correlator_spacing = 0.02
-    s.dll_k1 = compute_loop_k(0.03)
+    s.correlator_spacing = 0.05
+    s.dll_k1 = compute_loop_k(0.1)
 
   if s.code_p<ca.code_length/2:
     n = int(fs*0.001*(ca.code_length-s.code_p)/ca.code_length)
